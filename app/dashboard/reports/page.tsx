@@ -1,0 +1,174 @@
+'use client';
+
+import { DashboardLayout } from '@/components/dashboard-layout';
+import { StatusBadge } from '@/components/status-badge';
+import { fetchReports } from '@/lib/reports';
+import { getCategoryIcon, getCategoryLabel } from '@/lib/categories';
+import { ReportStatus, STATUS_LABELS, CATEGORY_LABELS, ReportCategory, Report } from '@/lib/types';
+import { formatDate } from '@/components/report-card';
+import Link from 'next/link';
+import { useState, useMemo, useEffect } from 'react';
+import { Search, ArrowRight, Loader2 } from 'lucide-react';
+
+const STATUS_FILTERS: { value: 'all' | ReportStatus; label: string }[] = [
+  { value: 'all', label: 'Все' },
+  { value: 'new', label: 'Новые' },
+  { value: 'in_progress', label: 'В работе' },
+  { value: 'resolved', label: 'Решено' },
+];
+
+export default function DashboardReportsPage() {
+  const [statusFilter, setStatusFilter] = useState<'all' | ReportStatus>('all');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | ReportCategory>('all');
+  const [search, setSearch] = useState('');
+  const [reports, setReports] = useState<Report[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchReports()
+      .then((data) => {
+        setReports(data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const filtered = useMemo(() => {
+    return reports.filter((r) => {
+      if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+      if (categoryFilter !== 'all' && r.category !== categoryFilter) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        if (
+          !r.id.toLowerCase().includes(q) &&
+          !r.description.toLowerCase().includes(q) &&
+          !r.address.toLowerCase().includes(q)
+        )
+          return false;
+      }
+      return true;
+    });
+  }, [reports, statusFilter, categoryFilter, search]);
+
+  const categories = Object.keys(CATEGORY_LABELS) as ReportCategory[];
+
+  return (
+    <DashboardLayout>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-navy sm:text-3xl">Обращения</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Управление всеми обращениями граждан
+        </p>
+      </div>
+
+      {/* Filters */}
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              onClick={() => setStatusFilter(f.value)}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                statusFilter === f.value
+                  ? 'bg-navy text-white'
+                  : 'bg-white text-muted-foreground border border-border hover:bg-muted'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value as 'all' | ReportCategory)}
+            className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-navy focus:border-primary focus:outline-none"
+          >
+            <option value="all">Все категории</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
+            ))}
+          </select>
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск..."
+              className="rounded-lg border border-border bg-white py-2 pl-9 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-3 text-sm text-muted-foreground">
+        Найдено: <span className="font-semibold text-navy">{filtered.length}</span>
+      </div>
+
+      {loading ? (
+        <div className="flex h-48 items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-border bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border bg-muted/30 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <th className="px-4 py-3">ID</th>
+                  <th className="px-4 py-3">Категория</th>
+                  <th className="hidden px-4 py-3 md:table-cell">Адрес</th>
+                  <th className="hidden px-4 py-3 sm:table-cell">Дата</th>
+                  <th className="px-4 py-3">Статус</th>
+                  <th className="px-4 py-3 text-right">Действие</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {filtered.map((r) => {
+                  const Icon = getCategoryIcon(r.category);
+                  return (
+                    <tr key={r.id} className="transition-colors hover:bg-muted/30">
+                      <td className="px-4 py-3">
+                        <span className="font-mono text-xs font-semibold text-navy">{r.id.slice(0, 8)}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <Icon className="h-4 w-4 text-primary" />
+                          <span className="text-sm">{getCategoryLabel(r.category)}</span>
+                        </div>
+                      </td>
+                      <td className="hidden px-4 py-3 text-sm text-muted-foreground md:table-cell max-w-xs">
+                        <span className="truncate">{r.address}</span>
+                      </td>
+                      <td className="hidden px-4 py-3 text-sm text-muted-foreground sm:table-cell">
+                        {formatDate(r.createdAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={r.status} />
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <Link
+                          href={`/dashboard/reports/${r.id}`}
+                          className="inline-flex items-center gap-1 rounded-lg bg-navy px-3 py-1.5 text-xs font-semibold text-white hover:bg-navy-light"
+                        >
+                          Открыть
+                          <ArrowRight className="h-3 w-3" />
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {filtered.length === 0 && (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              Обращений не найдено
+            </div>
+          )}
+        </div>
+      )}
+    </DashboardLayout>
+  );
+}
