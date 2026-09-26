@@ -28,7 +28,7 @@ export function DashboardSidebar() {
           <Globe className="h-5 w-5 text-white" />
         </div>
         <div>
-          <div className="font-bold text-lg leading-none">AqTau</div>
+          <div className="font-bold text-lg leading-none">Aýan</div>
           <div className="text-[10px] text-white/50 uppercase tracking-wider">
             Муниципальная панель
           </div>

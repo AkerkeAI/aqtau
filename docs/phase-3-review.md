@@ -1,4 +1,4 @@
-# AqTau: Phase 2 UI + Phase 3 Resolution Verification
+# Aýan: Phase 2 UI + Phase 3 Resolution Verification
 
 > Historical 00007 implementation. Operator final verification described below is superseded by [independent developer review, migration 00008](independent-review.md). Do not use this older permission model.
 

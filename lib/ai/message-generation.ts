@@ -182,7 +182,7 @@ REQUIREMENTS:
 3. Clearly identify the location (address)
 4. Explain the reported problem based on the description
 5. Politely request review and action
-6. Include the AqTau report ID (${reportIdShort}) for reference
+6. Include the Aýan report ID (${reportIdShort}) for reference
 7. Use Russian language by default unless the report clearly requires another language
 8. For email: include a professional subject line
 9. For messaging apps: be more conversational and direct
@@ -228,7 +228,7 @@ export function generateFallbackMessage(
 
   const messageBody = `Здравствуйте, коллеги из ${organization.name}.
 
-Поступило обращение через платформу AqTau:
+Поступило обращение через платформу Aýan:
 
 Категория: ${categoryLabel}
 Адрес: ${report.address}
@@ -238,7 +238,7 @@ ID обращения: ${reportIdShort}
 Просим рассмотреть обращение и принять меры по решению проблемы.
 
 С уважением,
-Команда AqTau`;
+Команда Aýan`;
 
   const generated: GeneratedMessage = {
     message: messageBody,
@@ -246,7 +246,7 @@ ID обращения: ${reportIdShort}
   };
 
   if (isEmail) {
-    generated.subject = `Обращение #${reportIdShort} - ${categoryLabel} - AqTau`;
+    generated.subject = `Обращение #${reportIdShort} - ${categoryLabel} - Aýan`;
   }
 
   return generated;

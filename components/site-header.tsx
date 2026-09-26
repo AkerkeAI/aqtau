@@ -25,7 +25,7 @@ export function SiteHeader() {
           </div>
           <div className="flex flex-col leading-none">
             <span className="font-bold tracking-tight text-navy text-lg">
-              AqTau
+              Aýan
             </span>
             <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
               Цифровой город

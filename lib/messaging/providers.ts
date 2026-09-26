@@ -114,7 +114,7 @@ export class WhatsAppProvider extends BaseMessageProvider {
       '',
       message.body,
       '',
-      `Отправлено через AqTau`,
+      `Отправлено через Aýan`,
     ];
     return lines.join('\n');
   }
@@ -147,7 +147,7 @@ export class TelegramProvider extends BaseMessageProvider {
       '',
       message.body,
       '',
-      `Отправлено через AqTau`,
+      `Отправлено через Aýan`,
     ];
     return lines.join('\n');
   }
@@ -169,7 +169,7 @@ export class EmailProvider extends BaseMessageProvider {
   formatMessage(message: OutboundMessage): FormattedMessage {
     // Email messages have subject and can be more formal
     return {
-      subject: message.subject || `Обращение #${message.reportId.slice(0, 8)} - AqTau`,
+      subject: message.subject || `Обращение #${message.reportId.slice(0, 8)} - Aýan`,
       body: this.formatEmailMessage(message),
     };
   }
@@ -181,7 +181,7 @@ export class EmailProvider extends BaseMessageProvider {
       message.body,
       '',
       `--`,
-      `AqTau - Цифровая платформа для жителей Актау`,
+      `Aýan - Цифровая платформа для жителей Актау`,
       `ID обращения: ${message.reportId}`,
     ];
     return lines.join('\n');

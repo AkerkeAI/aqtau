@@ -1,4 +1,4 @@
-# AqTau — independent developer review (00008)
+# Aýan — independent developer review (00008)
 
 This document supersedes the operator-final-review model in `phase-3-review.md`.
 
@@ -46,7 +46,7 @@ Anonymous resident feedback remains an advisory signal/reopen mechanism, not fin
 2. In your Supabase project, open Authentication → Users → Add user → Create new user. Enter the new developer's email/password yourself; complete/confirm the email as required by the project. Do not share the password with an agent.
 3. Copy that new Auth user's UUID from Users.
 4. In SQL Editor as project administrator, run `docs/create-developer.sql`, replacing BOTH placeholders with the Auth UUID. It inserts the enabled developer role, or updates just that existing profile.
-5. Sign out of AqTau, then use “Вход для оператора / разработчика” with that account. It should open `/dashboard/review`.
+5. Sign out of Aýan, then use “Вход для оператора / разработчика” with that account. It should open `/dashboard/review`.
 
 Auth user management reference: https://supabase.com/docs/guides/auth/managing-user-data
 

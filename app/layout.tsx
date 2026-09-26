@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ['latin', 'cyrillic'], variable: '--font-inter' }
 const manrope = Manrope({ subsets: ['latin'], variable: '--font-manrope' });
 
 export const metadata: Metadata = {
-  title: 'AqTau — Сделаем Актау лучше вместе',
+  title: 'Aýan — Сделаем Актау лучше вместе',
   description:
     'Цифровая платформа для жителей Актау. Сообщайте о городских проблемах и отслеживайте их решение.',
 };

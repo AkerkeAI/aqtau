@@ -14,7 +14,7 @@ export function SiteFooter() {
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent">
                 <Waves className="h-5 w-5 text-white" />
               </div>
-              <span className="text-lg font-bold">AqTau</span>
+              <span className="text-lg font-bold">Aýan</span>
             </div>
             <p className="mt-4 max-w-sm text-sm text-white/70">
               Цифровая платформа для жителей Актау. Сообщайте о городских
@@ -82,7 +82,7 @@ export function SiteFooter() {
         </div>
 
         <div className="mt-10 border-t border-white/10 pt-6 text-center text-xs text-white/50">
-          © 2026 AqTau. Цифровая платформа для жителей города Актау.
+          © 2026 Aýan. Цифровая платформа для жителей города Актау.
         </div>
       </div>
     </footer>
