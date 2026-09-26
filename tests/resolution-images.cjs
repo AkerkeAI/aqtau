@@ -1,0 +1,27 @@
+const fs = require('fs');
+const ts = require('typescript');
+const assert = require('node:assert/strict');
+const source = fs.readFileSync(require('path').join(__dirname,'../lib/resolutions/images.ts'),'utf8');
+const compiled = ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+const output = {exports:{}};
+new Function('exports','require','module',compiled)(output.exports,require,output);
+const {fetchEvidence,imageMime} = output.exports;
+process.env.NEXT_PUBLIC_SUPABASE_URL='https://test.supabase.co';
+const png = Buffer.from([137,80,78,71,13,10,26,10]);
+(async()=>{
+ assert.equal(imageMime(png),'image/png');
+ assert.equal(imageMime(Buffer.from('<svg>bad</svg>')),null);
+ let calls=0;
+ global.fetch=async()=>{calls++;return new Response(png,{headers:{'content-type':'image/png'}})};
+ for(const url of ['http://127.0.0.1/secret','https://evil.example/image.png','https://test.supabase.co/rest/v1/reports','https://test.supabase.co/storage/v1/object/public/other/x']) await assert.rejects(fetchEvidence(url));
+ assert.equal(calls,0);
+ const url='https://test.supabase.co/storage/v1/object/public/report-images/photo.png';
+ assert.equal((await fetchEvidence(url)).inlineData.data,png.toString('base64'));
+ global.fetch=async()=>new Response(png,{headers:{'content-type':'image/jpeg'}});
+ await assert.rejects(fetchEvidence(url));
+ global.fetch=async()=>new Response(new Uint8Array(5*1024*1024+1),{headers:{'content-type':'image/png'}});
+ await assert.rejects(fetchEvidence(url));
+ global.fetch=async()=>new Response(null,{status:404});
+ await assert.rejects(fetchEvidence(url));
+ console.log('PASS: image bytes; SSRF allowlist; invalid MIME; streaming size limit; unavailable image.');
+})().catch(e=>{console.error(e);process.exitCode=1});

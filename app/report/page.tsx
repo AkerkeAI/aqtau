@@ -9,8 +9,10 @@ import CityMap from '@/components/city-map-client';
 import { Camera, Upload, X, MapPin, FileText, CheckCircle2, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { ReportCategory, CATEGORY_LABELS, AKTAU_CENTER } from '@/lib/types';
 import { CATEGORY_ICONS } from '@/lib/categories';
-import { createReportWithPhoto, createReport } from '@/lib/reports';
+import { createReport, createReportWithPhoto, routeReport } from '@/lib/reports';
+import { getSupporterToken } from '@/lib/supporter-token';
 import { toast } from 'sonner';
+import { DuplicateReportModal } from '@/components/duplicate-report-modal';
 
 const CATEGORIES = Object.keys(CATEGORY_LABELS) as ReportCategory[];
 
@@ -26,6 +28,12 @@ export default function ReportPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  
+  // Duplicate detection state
+  const [checkingDuplicates, setCheckingDuplicates] = useState(false);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [duplicates, setDuplicates] = useState<any[]>([]);
+  const [bypassDuplicateCheck, setBypassDuplicateCheck] = useState(false);
 
   function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -40,8 +48,101 @@ export default function ReportPage() {
     setPosition([lat, lng]);
   }
 
+  async function checkForDuplicates(): Promise<boolean> {
+    if (!position) {
+      console.log('[DUPLICATE_CHECK] No position, skipping');
+      return false;
+    }
+    
+    console.log('[DUPLICATE_CHECK_START] lat=', position[0], 'lng=', position[1], 'category=', category);
+    setCheckingDuplicates(true);
+    try {
+      const response = await fetch(
+        `/api/reports/check-duplicate?lat=${position[0]}&lng=${position[1]}&category=${category}`
+      );
+      
+      if (!response.ok) {
+        console.error('[DUPLICATE_CHECK_HTTP_ERROR] status=', response.status);
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      console.log('[DUPLICATE_CHECK_RESPONSE] success=', data.success, 'duplicates=', data.duplicates?.length, 'data=', data);
+      
+      if (!data.success) {
+        console.error('[DUPLICATE_CHECK_API_ERROR]', data.error);
+        throw new Error(data.error || 'Failed to check for duplicates');
+      }
+      
+      if (data.duplicates && data.duplicates.length > 0) {
+        console.log('[DUPLICATE_CHECK_FOUND] showing modal with', data.duplicates.length, 'candidates');
+        setDuplicates(data.duplicates);
+        setShowDuplicateModal(true);
+        return true; // Duplicates found
+      }
+      
+      console.log('[DUPLICATE_CHECK_NONE] no duplicates found');
+      return false; // No duplicates
+    } catch (error) {
+      console.error('[DUPLICATE_CHECK_ERROR]', error);
+      toast.error('Не удалось проверить похожие обращения. Попробуйте ещё раз.');
+      throw error; // Re-throw to stop submission
+    } finally {
+      setCheckingDuplicates(false);
+    }
+  }
+
+  async function handleSupport(reportId: string) {
+    const token = getSupporterToken();
+    
+    try {
+      const response = await fetch(`/api/reports/${reportId}/support`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        if (data.alreadySupported) {
+          toast.info('Вы уже поддержали эту проблему');
+        } else {
+          toast.success('Спасибо! Ваш голос добавлен к существующей проблеме.');
+        }
+        
+        setShowDuplicateModal(false);
+        // Navigate to the supported report
+        router.push(`/dashboard/reports/${reportId}`);
+      }
+    } catch (error) {
+      console.error('Error adding support:', error);
+      toast.error('Не удалось добавить поддержку');
+    }
+  }
+
+  function handleViewDetails(reportId: string) {
+    setShowDuplicateModal(false);
+    router.push(`/dashboard/reports/${reportId}`);
+  }
+
+  function handleCreateAnyway() {
+    setShowDuplicateModal(false);
+    setBypassDuplicateCheck(true);
+    // Trigger the actual submission
+    handleSubmit(new Event('submit') as any);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    
+    // Prevent double submission
+    if (submitting) {
+      console.log('[SUBMIT_BLOCKED] already submitting');
+      return;
+    }
+    
     setSubmitError(null);
 
     if (!description.trim() || !address.trim()) {
@@ -53,38 +154,64 @@ export default function ReportPage() {
       return;
     }
 
-    setSubmitting(true);
-    try {
-      if (photoFile) {
-        await createReportWithPhoto(
-          {
-            category,
-            description: description.trim(),
-            address: address.trim(),
-            lat: position[0],
-            lng: position[1],
-            photoUrl: null,
-          },
-          photoFile,
-        );
-      } else {
-        await createReport({
-          category,
-          description: description.trim(),
-          address: address.trim(),
-          lat: position[0],
-          lng: position[1],
-          photoUrl: null,
-        });
+    console.log('[SUBMIT_VALIDATION] bypassDuplicateCheck=', bypassDuplicateCheck);
+
+    // Check for duplicates first (unless bypassed)
+    if (!bypassDuplicateCheck) {
+      console.log('[SUBMIT_CHECKING_DUPLICATES] about to call checkForDuplicates');
+      try {
+        const hasDuplicates = await checkForDuplicates();
+        console.log('[SUBMIT_DUPLICATES_RESULT] hasDuplicates=', hasDuplicates);
+        if (hasDuplicates) {
+          console.log('[SUBMIT_STOPPED] duplicates found, showing modal');
+          return; // Show duplicate modal, don't proceed
+        }
+      } catch (error) {
+        console.log('[SUBMIT_STOPPED] duplicate check failed, error already shown to user');
+        return; // Stop submission, error already shown to user
       }
-      setSubmitting(false);
-      setSubmitted(true);
-      toast.success('Обращение отправлено!');
+    } else {
+      console.log('[SUBMIT_BYPASS] duplicate check bypassed');
+    }
+
+    console.log('[SUBMIT_START] category=', category, 'hasPhoto=', !!photoFile);
+    setSubmitting(true);
+
+    const input = {
+      category,
+      description: description.trim(),
+      address: address.trim(),
+      lat: position[0],
+      lng: position[1],
+      photoUrl: null as string | null,
+    };
+
+    let report;
+    try {
+      report = photoFile
+        ? await createReportWithPhoto(input, photoFile)
+        : await createReport(input);
     } catch (err) {
+      console.error('[SUBMIT_ERROR]', err);
       setSubmitting(false);
       const msg = err instanceof Error ? err.message : 'Неизвестная ошибка';
       setSubmitError(msg);
       toast.error('Не удалось отправить обращение');
+      return;
+    }
+
+    setSubmitting(false);
+    setSubmitted(true);
+    toast.success('Обращение отправлено!');
+    console.log('[SUBMIT_SUCCESS] reportId=', report.id);
+    
+    // Reset bypass flag for next submission
+    setBypassDuplicateCheck(false);
+
+    try {
+      await routeReport(report.id);
+    } catch (error) {
+      console.error('[POST_PROCESS_ROUTING_ERROR]', error);
     }
   }
 
@@ -320,6 +447,16 @@ export default function ReportPage() {
         </form>
       </div>
       <SiteFooter />
+      
+      {/* Duplicate Report Modal */}
+      <DuplicateReportModal
+        isOpen={showDuplicateModal}
+        duplicates={duplicates}
+        onSupport={handleSupport}
+        onCreateAnyway={handleCreateAnyway}
+        onCancel={() => setShowDuplicateModal(false)}
+        onViewDetails={handleViewDetails}
+      />
     </div>
   );
 }

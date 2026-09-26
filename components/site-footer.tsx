@@ -1,5 +1,8 @@
+'use client';
+
 import Link from 'next/link';
 import { Waves, Mail, Phone, MapPin } from 'lucide-react';
+import { OperatorLoginModal } from '@/components/operator-login-modal';
 
 export function SiteFooter() {
   return (
@@ -65,18 +68,21 @@ export function SiteFooter() {
               </li>
               <li className="flex items-center gap-2">
                 <Phone className="h-4 w-4 shrink-0" />
-                8 (7292) 00-00-00
+                8 (702) 329 30 97
               </li>
               <li className="flex items-center gap-2">
                 <Mail className="h-4 w-4 shrink-0" />
-                info@aqtau.kz
+                aqtau.info7292@gmail.com
               </li>
             </ul>
+            <div className="mt-4">
+              <OperatorLoginModal variant="footer" />
+            </div>
           </div>
         </div>
 
         <div className="mt-10 border-t border-white/10 pt-6 text-center text-xs text-white/50">
-          © 2024 AqTau. Цифровая платформа для жителей города Актау.
+          © 2026 AqTau. Цифровая платформа для жителей города Актау.
         </div>
       </div>
     </footer>

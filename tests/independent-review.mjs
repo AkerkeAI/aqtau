@@ -1,0 +1,114 @@
+// Isolated PostgreSQL integration test. No network or real Supabase connection.
+// Install @electric-sql/pglite in /tmp/aqtau-sql-test, then run this file with node.
+const { PGlite } = await import(process.env.PGLITE_MODULE || '@electric-sql/pglite');
+import { readFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
+const db = new PGlite();
+await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role; CREATE SCHEMA auth; CREATE SCHEMA storage;
+CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
+CREATE FUNCTION auth.role() RETURNS text LANGUAGE sql AS $$ SELECT current_setting('request.jwt.claim.role',true) $$;
+CREATE TABLE auth.users(id uuid PRIMARY KEY);
+CREATE TABLE storage.buckets(id text PRIMARY KEY,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
+CREATE TABLE storage.objects(id uuid DEFAULT gen_random_uuid(),bucket_id text,name text);
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+CREATE FUNCTION storage.foldername(text) RETURNS text[] LANGUAGE sql AS $$ SELECT string_to_array($1,'/') $$;
+GRANT USAGE ON SCHEMA public,auth,storage TO anon,authenticated,service_role;
+GRANT SELECT,INSERT ON storage.objects TO anon,authenticated;`);
+for(const name of ['20260923214917_create_reports_table.sql','20260925000000_add_operator_auth.sql','20260925000001_add_organizations_and_communication.sql']) {
+ let sql=readFileSync(new URL('../supabase/migrations/'+name,import.meta.url),'utf8');
+ // Omit demo seed records from the original migration; use isolated test fixtures only.
+ if(name.startsWith('202609232')) sql=sql.slice(0,sql.indexOf('-- 5. SEED DATA'));
+ await db.exec(sql);
+}
+await db.exec(`GRANT SELECT,INSERT,UPDATE ON public.reports TO anon,authenticated;
+GRANT SELECT ON public.operator_profiles TO authenticated;
+GRANT SELECT ON public.report_events TO anon,authenticated;`);
+await db.exec(readFileSync(new URL('../supabase/migrations/20260926000007_resolution_verification.sql',import.meta.url),'utf8'));
+
+const op='10000000-0000-4000-8000-000000000001', dev='10000000-0000-4000-8000-000000000002', outsider='10000000-0000-4000-8000-000000000003';
+const report='20000000-0000-4000-8000-000000000001';
+await db.exec(`GRANT INSERT,UPDATE,DELETE ON public.report_events,public.operator_profiles TO authenticated;
+INSERT INTO auth.users VALUES('${op}'),('${dev}'),('${outsider}');
+INSERT INTO operator_profiles(id,is_operator) VALUES('${op}',true),('${dev}',true),('${outsider}',false);
+INSERT INTO reports(id,category,description,address,latitude,longitude) VALUES('${report}','roads','isolated test','isolated test',1,1);
+INSERT INTO storage.objects(bucket_id,name) VALUES('resolution-images','${op}/${report}/a.jpg');`);
+const role=async(r,user='')=>db.exec(`RESET ROLE; SET request.jwt.claim.sub='${user}'; SET request.jwt.claim.role='${r}'; SET ROLE ${r};`);
+const fails=async(sql,code)=>{
+ await assert.rejects(db.exec(sql),e=>!code||e.code===code);
+};
+await role('authenticated',op);
+const legacy=(await db.query(`SELECT submit_report_resolution('${report}','test repair','${op}/${report}/a.jpg') AS id`)).rows[0].id;
+await db.exec(`SELECT verify_report_resolution('${legacy}')`); // Demonstrates 00007 flaw before correction.
+await db.exec('RESET ROLE');
+await db.exec(readFileSync(new URL('../supabase/migrations/20260926000008_independent_resolution_review.sql',import.meta.url),'utf8'));
+assert.equal((await db.query(`SELECT role FROM operator_profiles WHERE id='${op}'`)).rows[0].role,'operator');
+assert.equal((await db.query(`SELECT submitted_by FROM report_resolutions WHERE id='${legacy}'`)).rows[0].submitted_by,op);
+assert.equal((await db.query(`SELECT count(*)::int AS n FROM report_events WHERE report_id='${report}'`)).rows[0].n,3);
+await db.exec(`UPDATE operator_profiles SET role='developer' WHERE id='${dev}'`);
+await role('authenticated',op);
+assert.equal((await db.query('SELECT is_operator() AS allowed')).rows[0].allowed,true);
+assert.equal((await db.query('SELECT is_developer() AS allowed')).rows[0].allowed,false);
+const before=JSON.stringify((await db.query(`SELECT * FROM report_resolutions WHERE id='${legacy}'`)).rows);
+await fails(`SELECT verify_report_resolution('${legacy}')`,'42501');
+await fails(`SELECT review_report_resolution('${legacy}','verify')`,'42501');
+await fails(`SELECT review_report_resolution('${legacy}','reopen')`,'42501');
+await fails(`SELECT record_resolution_ai('${legacy}','{}')`,'42501');
+await fails(`UPDATE report_resolutions SET state='verified' WHERE id='${legacy}'`,'42501');
+await fails(`UPDATE operator_profiles SET role='developer' WHERE id='${op}'`,'42501');
+await fails(`INSERT INTO operator_profiles(id,is_operator,role) VALUES('${outsider}',true,'developer')`,'42501');
+await fails(`UPDATE reports SET photo_url='forged' WHERE id='${report}'`,'42501');
+await fails(`INSERT INTO report_events(report_id,event_type,title,actor_type) VALUES('${report}','resolution_verified','forged','operator')`,'42501');
+assert.equal((await db.query(`DELETE FROM report_events WHERE report_id='${report}' AND event_type='resolution_verified' RETURNING id`)).rows.length,0);
+await fails(`SELECT create_report_event('${report}','resolution_verified','forged')`,'42501');
+await fails(`SELECT create_report_event('${report}','status_changed','forged',NULL,'developer')`,'42501');
+assert.equal(JSON.stringify((await db.query(`SELECT * FROM report_resolutions WHERE id='${legacy}'`)).rows),before);
+// An operator promoted later still cannot approve their own evidence.
+await db.exec(`RESET ROLE; UPDATE operator_profiles SET role='developer' WHERE id='${op}'`);
+await role('authenticated',op);await fails(`SELECT verify_report_resolution('${legacy}')`,'42501');
+await db.exec(`RESET ROLE; UPDATE operator_profiles SET role='operator' WHERE id='${op}'`);
+await role('authenticated',dev);
+assert.equal((await db.query('SELECT is_developer() AS allowed')).rows[0].allowed,true);
+assert.equal((await db.query('SELECT is_operator() AS allowed')).rows[0].allowed,false);
+await fails(`UPDATE operator_profiles SET role='operator' WHERE id='${dev}'`,'42501');
+await db.exec(`SELECT verify_report_resolution('${legacy}')`);
+assert.equal((await db.query(`SELECT reviewer_user_id,decision FROM resolution_reviews WHERE resolution_id='${legacy}'`)).rows[0].reviewer_user_id,dev);
+assert((await db.query(`SELECT reviewed_at FROM report_resolutions WHERE id='${legacy}'`)).rows[0].reviewed_at);
+await fails(`SELECT verify_report_resolution('${legacy}')`,'22023');
+await db.exec(`SELECT review_report_resolution('${legacy}','reopen')`);
+assert.equal((await db.query(`SELECT status FROM reports WHERE id='${report}'`)).rows[0].status,'in_progress');
+assert.equal((await db.query(`SELECT count(*)::int AS n FROM resolution_reviews WHERE resolution_id='${legacy}'`)).rows[0].n,2);
+await role('authenticated',op);
+await fails(`UPDATE reports SET status='resolved' WHERE id='${report}'`,'42501');
+assert.equal((await db.query('SELECT * FROM resolution_reviews')).rows.length,0);
+const current=(await db.query(`SELECT submit_report_resolution('${report}','second repair','${op}/${report}/a.jpg') AS id`)).rows[0].id;
+assert.equal((await db.query(`SELECT submitted_by,state FROM report_resolutions WHERE id='${current}'`)).rows[0].state,'pending');
+await fails(`SELECT verify_report_resolution('${current}')`,'42501');
+await role('service_role');
+await db.exec(`SELECT record_resolution_ai('${current}','{"likely_resolved":false,"confidence":0,"observations":[],"requires_human_review":true}')`);
+await role('authenticated',op);
+assert.equal((await db.query(`SELECT state FROM report_resolutions WHERE id='${current}'`)).rows[0].state,'needs_review');
+await fails(`SELECT record_resolution_ai('${current}','{"likely_resolved":true,"confidence":1,"observations":[],"requires_human_review":false}')`,'42501');
+await fails(`SELECT verify_report_resolution('${current}')`,'42501');
+await role('anon');
+await fails(`SELECT verify_report_resolution('${current}')`,'42501');
+await fails(`SELECT review_report_resolution('${current}','verify')`,'42501');
+await fails(`SELECT submit_report_resolution('${report}','test note','${op}/${report}/a.jpg')`,'42501');
+await fails('SELECT * FROM resolution_reviews','42501');
+await db.exec(`SELECT resolution_resident_feedback('${current}','30000000-0000-4000-8000-000000000001','confirm')`);
+assert.equal((await db.query(`SELECT status FROM reports WHERE id='${report}'`)).rows[0].status,'in_progress');
+await role('authenticated',outsider);await fails(`SELECT verify_report_resolution('${current}')`,'42501');
+await role('authenticated',dev);
+await fails(`SELECT review_report_resolution(NULL,'verify')`,'22023');
+await fails(`SELECT review_report_resolution('${current}','bad')`,'22023');
+await db.exec(`SELECT review_report_resolution('${current}','verify')`);
+assert.equal((await db.query(`SELECT status FROM reports WHERE id='${report}'`)).rows[0].status,'resolved');
+// Late model responses cannot overwrite independent review.
+await role('service_role');
+await db.exec(`SELECT record_resolution_ai('${current}','{"likely_resolved":false,"confidence":0,"observations":[],"requires_human_review":true}')`);
+await role('authenticated',dev);
+assert.equal((await db.query(`SELECT state FROM report_resolutions WHERE id='${current}'`)).rows[0].state,'verified');
+const audit=(await db.query(`SELECT * FROM resolution_reviews WHERE resolution_id='${current}'`)).rows[0];
+assert.equal(audit.reviewer_user_id,dev);assert.equal(audit.decision,'verify');assert.equal(audit.verification_state,'verified');
+await fails(`UPDATE resolution_reviews SET decision='reopen'`,'42501');
+await db.close();
+console.log('PASS: 00008 migration, preserved operators/evidence/events, role escalation denied, both operator verification RPCs denied, forged AI/events denied, promoted-author self-review denied, developer confirm/reopen/audit, direct status bypass denied, anon/nonstaff denied, late AI ignored.');

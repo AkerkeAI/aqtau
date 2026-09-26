@@ -8,7 +8,7 @@ import { ReportStatus, STATUS_LABELS, CATEGORY_LABELS, ReportCategory, Report } 
 import { formatDate } from '@/components/report-card';
 import Link from 'next/link';
 import { useState, useMemo, useEffect } from 'react';
-import { Search, ArrowRight, Loader2 } from 'lucide-react';
+import { Search, ArrowRight, Loader2, Users } from 'lucide-react';
 
 const STATUS_FILTERS: { value: 'all' | ReportStatus; label: string }[] = [
   { value: 'all', label: 'Все' },
@@ -21,6 +21,7 @@ export default function DashboardReportsPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | ReportStatus>('all');
   const [categoryFilter, setCategoryFilter] = useState<'all' | ReportCategory>('all');
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState<'newest' | 'most_supported' | 'longest_unresolved'>('newest');
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -34,7 +35,7 @@ export default function DashboardReportsPage() {
   }, []);
 
   const filtered = useMemo(() => {
-    return reports.filter((r) => {
+    let result = reports.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (categoryFilter !== 'all' && r.category !== categoryFilter) return false;
       if (search) {
@@ -48,7 +49,25 @@ export default function DashboardReportsPage() {
       }
       return true;
     });
-  }, [reports, statusFilter, categoryFilter, search]);
+
+    // Apply sorting
+    result = result.sort((a, b) => {
+      if (sortBy === 'newest') {
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      } else if (sortBy === 'most_supported') {
+        const aSupport = a.supportCount || 0;
+        const bSupport = b.supportCount || 0;
+        return bSupport - aSupport;
+      } else if (sortBy === 'longest_unresolved') {
+        const aDate = a.status === 'resolved' ? a.resolvedAt : a.createdAt;
+        const bDate = b.status === 'resolved' ? b.resolvedAt : b.createdAt;
+        return new Date(aDate || 0).getTime() - new Date(bDate || 0).getTime();
+      }
+      return 0;
+    });
+
+    return result;
+  }, [reports, statusFilter, categoryFilter, search, sortBy]);
 
   const categories = Object.keys(CATEGORY_LABELS) as ReportCategory[];
 
@@ -89,6 +108,15 @@ export default function DashboardReportsPage() {
               <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
             ))}
           </select>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as 'newest' | 'most_supported' | 'longest_unresolved')}
+            className="rounded-lg border border-border bg-white px-3 py-2 text-sm font-medium text-navy focus:border-primary focus:outline-none"
+          >
+            <option value="newest">Сначала новые</option>
+            <option value="most_supported">Самые поддерживаемые</option>
+            <option value="longest_unresolved">Дольше всего нерешенные</option>
+          </select>
           <div className="relative">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <input
@@ -120,6 +148,7 @@ export default function DashboardReportsPage() {
                   <th className="hidden px-4 py-3 md:table-cell">Адрес</th>
                   <th className="hidden px-4 py-3 sm:table-cell">Дата</th>
                   <th className="px-4 py-3">Статус</th>
+                  <th className="px-4 py-3">Поддержка</th>
                   <th className="px-4 py-3 text-right">Действие</th>
                 </tr>
               </thead>
@@ -145,6 +174,12 @@ export default function DashboardReportsPage() {
                       </td>
                       <td className="px-4 py-3">
                         <StatusBadge status={r.status} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                          <Users className="h-3 w-3" />
+                          {r.supportCount ? 1 + r.supportCount : 1}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right">
                         <Link

@@ -2,6 +2,7 @@
 
 import { DashboardLayout } from '@/components/dashboard-layout';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import CityMap from '@/components/city-map-client';
 import { StatusBadge } from '@/components/status-badge';
 import { fetchReports, fetchReportStats, fetchCategoryStats } from '@/lib/reports';
@@ -10,6 +11,7 @@ import { CATEGORY_LABELS } from '@/lib/types';
 import { getCategoryIcon, getCategoryLabel, CATEGORY_HEX } from '@/lib/categories';
 import { formatDate } from '@/components/report-card';
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/lib/auth-context';
 import {
   FileText,
   Eye,
@@ -23,10 +25,24 @@ import {
 } from 'lucide-react';
 
 export default function DashboardPage() {
+  const router = useRouter();
+  const { isOperator, isLoading: authLoading } = useAuth();
   const [reports, setReports] = useState<Report[]>([]);
   const [stats, setStats] = useState<ReportStats>({ total: 0, new: 0, inProgress: 0, resolved: 0 });
   const [catStats, setCatStats] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+
+  // Redirect non-operators
+  useEffect(() => {
+    if (!authLoading && !isOperator) {
+      router.push('/');
+    }
+  }, [isOperator, authLoading, router]);
+
+  // Don't render anything while checking auth or if not operator
+  if (authLoading || !isOperator) {
+    return null;
+  }
 
   useEffect(() => {
     Promise.all([fetchReports(), fetchReportStats(), fetchCategoryStats()])

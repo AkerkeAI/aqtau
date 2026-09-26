@@ -10,7 +10,7 @@ import { getCategoryIcon, getCategoryLabel } from '@/lib/categories';
 import { fetchReports } from '@/lib/reports';
 import { ReportStatus, CATEGORY_LABELS, ReportCategory, Report } from '@/lib/types';
 import { formatDate } from '@/components/report-card';
-import { MapPin, Calendar, ArrowLeft, X, Filter, Loader2 } from 'lucide-react';
+import { MapPin, Calendar, ArrowLeft, X, Filter, Loader2, Users } from 'lucide-react';
 import { useEffect } from 'react';
 
 const STATUS_FILTERS: { value: 'all' | ReportStatus; label: string }[] = [
@@ -29,23 +29,28 @@ export default function MapPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    console.log('[MAP_PAGE_LOAD]');
     fetchReports()
       .then((data) => {
+        console.log('[MAP_PAGE_DATA] reports=', data.length);
         setReports(data);
         setLoading(false);
       })
       .catch((err) => {
+        console.error('[MAP_PAGE_ERROR]', err);
         setError(err.message);
         setLoading(false);
       });
   }, []);
 
   const filtered = useMemo(() => {
-    return reports.filter((r) => {
+    const result = reports.filter((r) => {
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (categoryFilter !== 'all' && r.category !== categoryFilter) return false;
       return true;
     });
+    console.log('[MAP_FILTERED] total=', reports.length, 'filtered=', result.length, 'statusFilter=', statusFilter, 'categoryFilter=', categoryFilter);
+    return result;
   }, [reports, statusFilter, categoryFilter]);
 
   const categories = Object.keys(CATEGORY_LABELS) as ReportCategory[];
@@ -176,6 +181,12 @@ export default function MapPage() {
                         <Calendar className="h-3.5 w-3.5" />
                         {formatDate(selected.createdAt)}
                       </div>
+                      {selected.supportCount && selected.supportCount > 0 && (
+                        <div className="flex items-center gap-1.5 text-primary font-medium">
+                          <Users className="h-3.5 w-3.5" />
+                          Затронуто жителей: {1 + selected.supportCount}
+                        </div>
+                      )}
                     </div>
                     <Link
                       href={`/dashboard/reports/${selected.id}`}
@@ -218,6 +229,12 @@ export default function MapPage() {
                               <MapPin className="h-3 w-3" />
                               {r.address}
                             </p>
+                            {r.supportCount && r.supportCount > 0 && (
+                              <p className="mt-1 flex items-center gap-1 text-xs text-primary font-medium">
+                                <Users className="h-3 w-3" />
+                                Затронуто жителей: {1 + r.supportCount}
+                              </p>
+                            )}
                           </div>
                         </button>
                       );

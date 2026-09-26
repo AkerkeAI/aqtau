@@ -6,15 +6,46 @@ import {
   ReportStats,
   rowToReport,
 } from './types';
+import { getReportEvents, convertEventsToHistory } from './events/report-events';
 
 export async function fetchReports(): Promise<Report[]> {
+  console.log('[MAP_FETCH_START]');
   const { data, error } = await supabase
     .from('reports')
     .select('*')
     .order('created_at', { ascending: false });
 
-  if (error) throw error;
-  return (data as ReportRow[]).map(rowToReport);
+  if (error) {
+    console.error('[MAP_FETCH_ERROR]', error);
+    throw error;
+  }
+  
+  console.log('[MAP_FETCH_SUCCESS] databaseReports=', data?.length || 0);
+  
+  const reports = (data as ReportRow[]).map(rowToReport);
+  
+  // Fetch support counts for all reports using SECURITY DEFINER RPC
+  const reportsWithSupportCount = await Promise.all(
+    reports.map(async (report) => {
+      try {
+        const { data: count, error: countError } = await supabase.rpc('get_report_support_count', {
+          p_report_id: report.id,
+        });
+        if (!countError && count !== null) {
+          return { ...report, supportCount: count };
+        }
+        return report;
+      } catch (error) {
+        console.error('Error fetching support count for report:', report.id, error);
+        return report;
+      }
+    })
+  );
+  
+  const validCoordinates = reportsWithSupportCount.filter(r => r.lat && r.lng);
+  console.log('[MAP_VALID_COORDINATES]', validCoordinates.length);
+  
+  return reportsWithSupportCount;
 }
 
 export async function fetchReportById(id: string): Promise<Report | null> {
@@ -26,7 +57,22 @@ export async function fetchReportById(id: string): Promise<Report | null> {
 
   if (error) throw error;
   if (!data) return null;
-  return rowToReport(data as ReportRow);
+  
+  const report = rowToReport(data as ReportRow);
+  
+  // Fetch support count
+  try {
+    const { data: count, error: countError } = await supabase.rpc('get_report_support_count', {
+      p_report_id: id,
+    });
+    if (!countError && count !== null) {
+      return { ...report, supportCount: count };
+    }
+  } catch (error) {
+    console.error('Error fetching support count for report:', id, error);
+  }
+  
+  return report;
 }
 
 export async function fetchReportStats(): Promise<ReportStats> {
@@ -70,28 +116,40 @@ export interface NewReportInput {
 
 export async function uploadPhoto(
   file: File,
-  reportId: string,
+  objectId: string,
 ): Promise<string> {
+  console.log('[PHOTO_UPLOAD_START] objectId=', objectId, 'file=', file.name, 'size=', file.size);
+
   const ext = file.name.split('.').pop() || 'jpg';
-  const path = `${reportId}.${ext}`;
+  const path = `${objectId}.${ext}`;
 
   const { error } = await supabase.storage
     .from('report-images')
     .upload(path, file, {
       cacheControl: '3600',
-      upsert: true,
+      upsert: false,
     });
 
-  if (error) throw error;
+  if (error) {
+    console.error('[PHOTO_UPLOAD_ERROR]', error);
+    throw error;
+  }
+
+  console.log('[PHOTO_UPLOAD_SUCCESS] path=', path);
 
   const { data: urlData } = supabase.storage
     .from('report-images')
     .getPublicUrl(path);
 
-  return urlData.publicUrl;
+  const publicUrl = urlData.publicUrl;
+  console.log('[PHOTO_URL_CREATED] url=', publicUrl);
+
+  return publicUrl;
 }
 
 export async function createReport(input: NewReportInput): Promise<Report> {
+  console.log('[REPORT_CREATE_START] category=', input.category, 'hasPhotoUrl=', !!input.photoUrl);
+
   const row = {
     category: input.category,
     description: input.description,
@@ -108,33 +166,49 @@ export async function createReport(input: NewReportInput): Promise<Report> {
     .select('*')
     .single();
 
-  if (error) throw error;
-  return rowToReport(data as ReportRow);
+  if (error) {
+    console.error('[REPORT_CREATE_ERROR]', error);
+    throw error;
+  }
+
+  const report = rowToReport(data as ReportRow);
+  console.log('[REPORT_CREATED] reportId=', report.id);
+  return report;
 }
 
 export async function createReportWithPhoto(
   input: NewReportInput,
   file: File,
 ): Promise<Report> {
-  // First create the report to get an ID
-  const report = await createReport({
+  // Anon cannot UPDATE reports. Upload first, then INSERT with photo_url set.
+  const photoUrl = await uploadPhoto(file, crypto.randomUUID());
+  return createReport({
     ...input,
-    photoUrl: null,
+    photoUrl,
+  });
+}
+
+export async function routeReport(reportId: string): Promise<{
+  success: true;
+  reportId: string;
+  organizationId: string;
+}> {
+  console.log('[CLIENT_ROUTE_START] reportId=', reportId);
+
+  const response = await fetch('/api/reports/' + reportId, {
+    method: 'POST',
   });
 
-  // Upload photo using the report ID
-  const photoUrl = await uploadPhoto(file, report.id);
+  const data = await response.json();
 
-  // Update the report with the photo URL
-  const { data, error } = await supabase
-    .from('reports')
-    .update({ photo_url: photoUrl })
-    .eq('id', report.id)
-    .select('*')
-    .single();
+  if (!response.ok || !data.success) {
+    const message = data.error || data.details || 'Unknown routing error';
+    console.error('[CLIENT_ROUTE_FAILED]', message);
+    throw new Error(message);
+  }
 
-  if (error) throw error;
-  return rowToReport(data as ReportRow);
+  console.log('[CLIENT_ROUTE_SUCCESS] organizationId=', data.organizationId);
+  return data;
 }
 
 export async function updateReportStatus(
@@ -157,12 +231,24 @@ export async function updateReportStatus(
   return rowToReport(data as ReportRow);
 }
 
-export function buildStatusHistory(
+export async function buildStatusHistory(
+  reportId: string,
   createdAt: string,
   updatedAt: string,
   resolvedAt: string | null,
   currentStatus: ReportStatus,
-): StatusHistoryEntryLike[] {
+): Promise<StatusHistoryEntryLike[]> {
+  // Try to get persistent events first
+  try {
+    const events = await getReportEvents(reportId);
+    if (events.length > 0) {
+      return convertEventsToHistory(events);
+    }
+  } catch (error) {
+    console.error('Error fetching report events, falling back to client-side logic:', error);
+  }
+
+  // Fallback to client-side logic for backward compatibility
   const history: StatusHistoryEntryLike[] = [
     {
       status: 'new',
@@ -194,7 +280,8 @@ export function buildStatusHistory(
 }
 
 interface StatusHistoryEntryLike {
-  status: ReportStatus;
+  status?: ReportStatus;
+  title?: string;
   date: string;
   comment?: string;
   author: string;

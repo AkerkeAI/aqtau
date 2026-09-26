@@ -2,6 +2,7 @@ import './globals.css';
 import type { Metadata } from 'next';
 import { Inter, Manrope } from 'next/font/google';
 import { Toaster } from '@/components/ui/sonner';
+import { AuthProviderWrapper } from '@/components/auth-provider';
 
 const inter = Inter({ subsets: ['latin', 'cyrillic'], variable: '--font-inter' });
 const manrope = Manrope({ subsets: ['latin'], variable: '--font-manrope' });
@@ -28,7 +29,7 @@ export default function RootLayout({
         />
       </head>
       <body className={`${inter.variable} ${manrope.variable} font-sans`}>
-        {children}
+        <AuthProviderWrapper>{children}</AuthProviderWrapper>
         <Toaster />
       </body>
     </html>

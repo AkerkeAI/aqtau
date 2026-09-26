@@ -1,15 +1,21 @@
 'use client';
 
+import { Resolution, resolutionLabel } from '@/lib/resolutions/types';
+import { ResolutionSection } from '@/components/resolution-section';
 import { DashboardLayout } from '@/components/dashboard-layout';
 import { StatusBadge } from '@/components/status-badge';
 import CityMap from '@/components/city-map-client';
-import { fetchReportById, updateReportStatus, buildStatusHistory } from '@/lib/reports';
-import { ReportStatus, STATUS_LABELS, Report } from '@/lib/types';
+import { fetchReportById, updateReportStatus } from '@/lib/reports';
+import { buildStatusHistory } from '@/lib/reports';
+import { ReportStatus, STATUS_LABELS, Report, StatusHistoryEntry } from '@/lib/types';
 import { formatDate } from '@/components/report-card';
 import { getCategoryIcon, getCategoryLabel } from '@/lib/categories';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
-import { use } from 'react';
+import { useParams } from 'next/navigation';
+import { useAuth } from '@/lib/auth-context';
+import { CommunicationSection } from '@/components/communication-section';
+import { getSupporterToken } from '@/lib/supporter-token';
 import {
   ArrowLeft,
   MapPin,
@@ -19,10 +25,11 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-const STATUS_ORDER: ReportStatus[] = ['new', 'in_progress', 'resolved'];
+const STATUS_ORDER: ReportStatus[] = ['new', 'in_progress'];
 
 const STATUS_TIMELINE_ICONS: Record<ReportStatus, typeof Clock> = {
   new: AlertCircle,
@@ -36,16 +43,18 @@ const STATUS_TIMELINE_COLORS: Record<ReportStatus, string> = {
   resolved: 'bg-emerald-500',
 };
 
-export default function ReportDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = use(params);
+export default function ReportDetailPage() {
+  const params = useParams();
+  const { isOperator, isDeveloper } = useAuth();
+  const id = params.id as string;
+  const [latestResolution, setLatestResolution] = useState<Resolution | null | undefined>(undefined);
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [history, setHistory] = useState<StatusHistoryEntry[]>([]);
+  const [hasSupported, setHasSupported] = useState(false);
+  const [supporting, setSupporting] = useState(false);
 
   useEffect(() => {
     fetchReportById(id)
@@ -63,8 +72,44 @@ export default function ReportDetailPage({
       });
   }, [id]);
 
+  useEffect(() => {
+    if (!report) {
+      setHistory([]);
+      setHasSupported(false);
+      return;
+    }
+
+    let cancelled = false;
+    buildStatusHistory(
+      report.id,
+      report.createdAt,
+      report.updatedAt,
+      report.resolvedAt,
+      report.status,
+    ).then((entries) => {
+      if (!cancelled) setHistory(entries);
+    });
+
+    // Check if current user has supported this report
+    const token = getSupporterToken();
+    fetch(`/api/reports/${report.id}/support?token=${token}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && !cancelled) {
+          setHasSupported(data.hasSupported);
+        }
+      })
+      .catch(err => {
+        console.error('Error checking support status:', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [report]);
+
   async function changeStatus(newStatus: ReportStatus) {
-    if (!report || newStatus === report.status) return;
+    if (!report || newStatus === report.status || !isOperator) return;
     setUpdating(true);
     try {
       const updated = await updateReportStatus(report.id, newStatus);
@@ -75,6 +120,42 @@ export default function ReportDetailPage({
       toast.error(msg);
     } finally {
       setUpdating(false);
+    }
+  }
+
+  async function handleSupport() {
+    if (!report) return;
+    
+    setSupporting(true);
+    const token = getSupporterToken();
+    
+    try {
+      const response = await fetch(`/api/reports/${report.id}/support`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        if (data.alreadySupported) {
+          toast.info('Вы уже поддержали эту проблему');
+        } else {
+          toast.success('Спасибо! Ваш голос добавлен.');
+          setHasSupported(true);
+          // Refresh report to get updated support count
+          const updatedReport = await fetchReportById(report.id);
+          if (updatedReport) {
+            setReport(updatedReport);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error adding support:', error);
+      toast.error('Не удалось добавить поддержку');
+    } finally {
+      setSupporting(false);
     }
   }
 
@@ -109,12 +190,6 @@ export default function ReportDetailPage({
   }
 
   const Icon = getCategoryIcon(report.category);
-  const history = buildStatusHistory(
-    report.createdAt,
-    report.updatedAt,
-    report.resolvedAt,
-    report.status,
-  );
 
   return (
     <DashboardLayout>
@@ -134,7 +209,7 @@ export default function ReportDetailPage({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-sm font-bold text-navy">{report.id.slice(0, 8)}</span>
-                <StatusBadge status={report.status} />
+                {latestResolution ? <span className="rounded border bg-muted px-2 py-1 text-xs">{resolutionLabel(latestResolution)}</span> : report.status==='resolved' ? <span className="rounded border px-2 py-1 text-xs">Решено ранее · {latestResolution===undefined?'проверка уточняется':'независимая проверка не зафиксирована'}</span> : <StatusBadge status={report.status} />}
               </div>
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Calendar className="h-3.5 w-3.5" />
@@ -192,17 +267,22 @@ export default function ReportDetailPage({
             </div>
           </div>
 
+          <ResolutionSection onLatestChange={setLatestResolution} report={report} isOperator={isOperator} onChanged={async () => {
+            const updated = await fetchReportById(id); if (updated) setReport(updated);
+          }} />
+
           {/* Timeline */}
           <div className="rounded-xl border border-border bg-white p-5 shadow-sm">
             <h3 className="mb-4 font-semibold text-navy">История статусов</h3>
             <div className="relative">
               {history.map((entry, i) => {
-                const SIcon = STATUS_TIMELINE_ICONS[entry.status];
+                const status = entry.status as ReportStatus;
+                const SIcon = STATUS_TIMELINE_ICONS[status] ?? Clock;
                 const isLast = i === history.length - 1;
                 return (
                   <div key={i} className="flex gap-4">
                     <div className="flex flex-col items-center">
-                      <div className={`flex h-8 w-8 items-center justify-center rounded-full ${STATUS_TIMELINE_COLORS[entry.status]} text-white`}>
+                      <div className={`flex h-8 w-8 items-center justify-center rounded-full ${STATUS_TIMELINE_COLORS[status] || 'bg-slate-500'} text-white`}>
                         <SIcon className="h-4 w-4" />
                       </div>
                       {!isLast && <div className="mt-1 h-full w-0.5 flex-1 bg-border" />}
@@ -210,7 +290,7 @@ export default function ReportDetailPage({
                     <div className="pb-6">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-sm text-navy">
-                          {STATUS_LABELS[entry.status]}
+                          {entry.title || STATUS_LABELS[status]}
                         </span>
                       </div>
                       <p className="mt-1 text-sm text-muted-foreground">{entry.comment}</p>
@@ -229,36 +309,84 @@ export default function ReportDetailPage({
 
         {/* Right: sidebar */}
         <div className="space-y-4">
-          {/* Status control */}
-          <div className="rounded-xl border border-border bg-white p-5 shadow-sm">
-            <h3 className="mb-3 font-semibold text-navy">Управление статусом</h3>
-            <div className="space-y-2">
-              {STATUS_ORDER.map((s) => {
-                const active = report.status === s;
-                return (
-                  <button
-                    key={s}
-                    onClick={() => changeStatus(s)}
-                    disabled={updating}
-                    className={`flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium transition-all disabled:opacity-50 ${
-                      active
-                        ? 'border-primary bg-primary/10 text-primary'
-                        : 'border-border text-muted-foreground hover:bg-muted'
-                    }`}
-                  >
-                    {STATUS_LABELS[s]}
-                    {active && <CheckCircle2 className="h-4 w-4" />}
-                  </button>
-                );
-              })}
-            </div>
-            {updating && (
-              <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Обновление...
+          {/* Support control - for residents */}
+          {!isOperator && !isDeveloper && (
+            <div className="rounded-xl border border-border bg-white p-5 shadow-sm">
+              <h3 className="mb-3 font-semibold text-navy">Поддержка жителей</h3>
+              <div className="flex items-center gap-2 mb-3">
+                <Users className="h-4 w-4 text-primary" />
+                <span className="text-sm text-foreground">
+                  Затронуто жителей: {report.supportCount ? 1 + report.supportCount : 1}
+                </span>
               </div>
-            )}
-          </div>
+              {hasSupported ? (
+                <button
+                  disabled
+                  className="w-full rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-muted-foreground cursor-not-allowed"
+                >
+                  Вы уже поддержали
+                </button>
+              ) : (
+                <button
+                  onClick={handleSupport}
+                  disabled={supporting}
+                  className="w-full rounded-lg bg-navy px-4 py-2.5 text-sm font-semibold text-white hover:bg-navy-light disabled:opacity-50"
+                >
+                  {supporting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Добавление...
+                    </>
+                  ) : (
+                    'У меня та же проблема +1'
+                  )}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Status control - only for operators */}
+          {isOperator && (
+            <div className="rounded-xl border border-border bg-white p-5 shadow-sm">
+              <h3 className="mb-3 font-semibold text-navy">Управление статусом</h3>
+              <p className="mb-3 text-sm text-muted-foreground">Для завершения обращения предоставьте описание и фото в разделе «Проверка решения». Подтвердить результат может только независимый разработчик-проверяющий.</p>
+              {(report.status==='resolved' || (latestResolution && latestResolution.state!=='reopened')) && <p className="mb-3 text-sm">Изменение статуса выполняется через проверку решения.</p>}
+              <div className="space-y-2">
+                {STATUS_ORDER.map((s) => {
+                  const active = report.status === s;
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => changeStatus(s)}
+                      disabled={updating || report.status==='resolved' || !!(latestResolution && latestResolution.state!=='reopened')}
+                      className={`flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-sm font-medium transition-all disabled:opacity-50 ${
+                        active
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      {STATUS_LABELS[s]}
+                      {active && <CheckCircle2 className="h-4 w-4" />}
+                    </button>
+                  );
+                })}
+              </div>
+              {updating && (
+                <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Обновление...
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Communication section - operators only */}
+          {isOperator && (
+            <div className="rounded-xl border border-border bg-white p-5 shadow-sm">
+              <h3 className="mb-3 font-semibold text-navy">Связь с организацией</h3>
+              <CommunicationSection report={report} />
+            </div>
+          )}
 
           {/* Info */}
           <div className="rounded-xl border border-border bg-white p-5 shadow-sm">
@@ -280,6 +408,12 @@ export default function ReportDetailPage({
                 <dt className="text-xs text-muted-foreground">Адрес</dt>
                 <dd className="font-medium text-foreground">{report.address}</dd>
               </div>
+              {report.supportCount && report.supportCount > 0 && (
+                <div>
+                  <dt className="text-xs text-muted-foreground">Затронуто жителей</dt>
+                  <dd className="font-medium text-foreground">{1 + report.supportCount}</dd>
+                </div>
+              )}
               {report.resolvedAt && (
                 <div>
                   <dt className="text-xs text-muted-foreground">Дата решения</dt>

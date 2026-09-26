@@ -18,7 +18,8 @@ export interface ReportStats {
 }
 
 export interface StatusHistoryEntry {
-  status: ReportStatus;
+  status?: ReportStatus;
+  title?: string;
   date: string;
   comment?: string;
   author: string;
@@ -39,6 +40,7 @@ export interface Report {
   aiCategory?: string | null;
   urgency?: string | null;
   organizationId?: string | null;
+  supportCount?: number;
 }
 
 export const CATEGORY_LABELS: Record<ReportCategory, string> = {

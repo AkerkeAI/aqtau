@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth-context';
+import { OperatorLoginModal } from '@/components/operator-login-modal';
 import {
   LayoutDashboard,
   ListChecks,
@@ -11,12 +13,13 @@ import {
 } from 'lucide-react';
 
 const NAV = [
-  { href: '/dashboard', label: 'Обзор', icon: LayoutDashboard, exact: true },
-  { href: '/dashboard/reports', label: 'Обращения', icon: ListChecks },
+  { href: '/dashboard', label: 'Обзор', icon: LayoutDashboard, exact: true, operatorOnly: true },
+  { href: '/dashboard/reports', label: 'Обращения', icon: ListChecks, operatorOnly: false },
 ];
 
 export function DashboardSidebar() {
   const pathname = usePathname();
+  const { isOperator, isDeveloper } = useAuth();
 
   return (
     <aside className="flex h-full w-full flex-col bg-navy text-white lg:w-64 lg:fixed lg:top-0 lg:left-0 lg:h-screen">
@@ -36,7 +39,7 @@ export function DashboardSidebar() {
         <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-white/40">
           Управление
         </div>
-        {NAV.map((item) => {
+        {NAV.filter(item => !item.operatorOnly || isOperator).map((item) => {
           const active = item.exact
             ? pathname === item.href
             : pathname.startsWith(item.href);
@@ -56,9 +59,10 @@ export function DashboardSidebar() {
             </Link>
           );
         })}
+        {isDeveloper && <Link href="/dashboard/review" className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-white hover:bg-white/10"><ListChecks className="h-4 w-4"/>Проверка решений</Link>}
       </nav>
 
-      <div className="border-t border-white/10 p-3">
+      <div className="border-t border-white/10 p-3 space-y-2">
         <Link
           href="/"
           className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-white/60 hover:bg-white/10 hover:text-white"
@@ -66,6 +70,9 @@ export function DashboardSidebar() {
           <ArrowLeft className="h-4 w-4" />
           На сайт
         </Link>
+        <div className="px-3">
+          <OperatorLoginModal variant="sidebar" />
+        </div>
       </div>
     </aside>
   );
